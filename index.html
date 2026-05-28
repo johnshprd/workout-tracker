@@ -181,6 +181,36 @@
     .toggle-btn { flex: 1; background: #1a1a1a; color: #666; border: 1px solid #2a2a2a; border-radius: 6px; padding: 6px; font-size: 12px; font-weight: 700; }
     .toggle-btn.on { background: #1a2600; color: #c8ff00; border-color: #c8ff00; }
     .btn-save-custom { width: 100%; background: #c8ff00; color: #000; border: none; border-radius: 6px; padding: 9px; font-weight: 700; font-size: 15px; margin-top: 8px; }
+    .empty { color: #333; text-align: center; margin-top: 60px; font-size: 14px; }
+
+    /* ── Progress tab ── */
+    .streak-card { background: #111; border: 1px solid #1e1e1e; border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+    .streak-top { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
+    .streak-num { font-family: 'Barlow Condensed', sans-serif; font-weight: 900; font-size: 56px; color: #c8ff00; line-height: 1; }
+    .streak-info { flex: 1; }
+    .streak-label { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 14px; color: #555; letter-spacing: 1px; text-transform: uppercase; }
+    .streak-best { font-size: 11px; color: #444; margin-top: 4px; }
+    .week-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+    .week-cell { text-align: center; }
+    .week-dot { width: 100%; aspect-ratio: 1; border-radius: 50%; background: #1e1e1e; margin: 0 auto 3px; }
+    .week-dot.done { background: #c8ff00; }
+    .week-dot.today-empty { background: #1e1e1e; border: 1px solid #3a5000; }
+    .week-day { font-size: 9px; color: #333; font-family: 'Barlow Condensed', sans-serif; }
+    .week-day.today { color: #c8ff00; }
+
+    .pb-card { background: #111; border: 1px solid #1e1e1e; border-radius: 10px; margin-bottom: 6px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; }
+    .pb-left { flex: 1; }
+    .pb-name { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 15px; }
+    .pb-date { font-size: 10px; color: #444; margin-top: 2px; }
+    .pb-val { font-family: 'Barlow Condensed', sans-serif; font-weight: 900; font-size: 22px; color: #c8ff00; text-align: right; }
+    .pb-unit { font-size: 11px; color: #555; }
+
+    .chart-card { background: #111; border: 1px solid #1e1e1e; border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+    .chart-title { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 2px; color: #555; text-transform: uppercase; margin-bottom: 10px; }
+    .chart-ex-select { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 12px; }
+    .chart-ex-btn { background: #1a1a1a; color: #666; border: 1px solid #2a2a2a; border-radius: 20px; padding: 3px 10px; font-size: 11px; font-weight: 700; font-family: 'Barlow Condensed', sans-serif; letter-spacing: 0.5px; }
+    .chart-ex-btn.active { background: #c8ff00; color: #000; border-color: #c8ff00; }
+    .chart-empty { color: #333; text-align: center; font-size: 12px; padding: 20px 0; }
   </style>
 </head>
 <body>
@@ -346,11 +376,12 @@ let state = {
   logs:       loadLogs(),
   routine:    loadRoutine(),   // ordered array of exercise IDs
   custom:     loadCustom(),    // [{id,name,cat,hasWeight,isTime}]
-  view:       "log",           // log | history | routine
+  view:       "log",           // log | history | routine | progress
   activeEx:   null,
   currentReps:"", currentKg:"", currentTime:"",
   libSearch:  "",
   libCat:     "All",
+  chartEx:    "PU",
   customForm: { name:"", cat:"Custom", hasWeight:false, isTime:false },
   timer: { duration:"", remaining:null, running:false, finished:false, countdown:null, intervalId:null }
 };
@@ -467,7 +498,168 @@ function deleteCustomExercise(id) {
   setState({ custom, routine });
 }
 
-// ── Render ────────────────────────────────────────────────────────────────────
+// ── Progress computations ─────────────────────────────────────────────────────
+function getStreak() {
+  const dates = Object.keys(state.logs).filter(d => {
+    const dl = state.logs[d];
+    return Object.values(dl).some(s => s.length > 0);
+  }).sort((a,b) => b.localeCompare(a));
+  if (!dates.length) return { current: 0, best: 0 };
+  let current = 0, best = 0, streak = 0;
+  const today = todayStr();
+  const msDay = 86400000;
+  // current streak
+  let check = today;
+  for (let i = 0; i < 365; i++) {
+    if (dates.includes(check)) { current++; }
+    else if (check === today) { /* didn't work out today yet — don't break */ }
+    else break;
+    const d = new Date(check + "T12:00:00"); d.setDate(d.getDate() - 1);
+    check = d.toISOString().split("T")[0];
+  }
+  // best streak
+  let run = 1;
+  for (let i = 1; i < dates.length; i++) {
+    const a = new Date(dates[i-1]+"T12:00:00"), b = new Date(dates[i]+"T12:00:00");
+    if ((a - b) === msDay) { run++; best = Math.max(best, run); }
+    else { run = 1; }
+  }
+  best = Math.max(best, current, dates.length > 0 ? 1 : 0);
+  return { current, best };
+}
+
+function getLast7Days() {
+  const result = [];
+  const days = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    const str = d.toISOString().split("T")[0];
+    const dl = state.logs[str] || {};
+    const worked = Object.values(dl).some(s => s.length > 0);
+    result.push({ str, day: days[d.getDay()], worked, isToday: i === 0 });
+  }
+  return result;
+}
+
+function getPersonalBests() {
+  const pbs = {};
+  for (const [date, dl] of Object.entries(state.logs)) {
+    for (const [id, sets] of Object.entries(dl)) {
+      const ex = getExercise(id);
+      for (const set of sets) {
+        if (!pbs[id]) pbs[id] = { reps: 0, weight: 0, time: 0, repDate:"", weightDate:"", timeDate:"" };
+        if (ex.isTime && set.time && parseInt(set.time) > pbs[id].time) { pbs[id].time = parseInt(set.time); pbs[id].timeDate = date; }
+        if (!ex.isTime && set.reps && set.reps > pbs[id].reps) { pbs[id].reps = set.reps; pbs[id].repDate = date; }
+        if (set.weight && set.weight > pbs[id].weight) { pbs[id].weight = set.weight; pbs[id].weightDate = date; }
+      }
+    }
+  }
+  return pbs;
+}
+
+function getVolumeData(exId) {
+  const ex = getExercise(exId);
+  const points = [];
+  const dates = Object.keys(state.logs).sort((a,b) => a.localeCompare(b)).slice(-14);
+  for (const date of dates) {
+    const sets = (state.logs[date] || {})[exId] || [];
+    if (!sets.length) continue;
+    let vol = 0;
+    if (ex.isTime) { vol = sets.reduce((s, x) => s + (parseInt(x.time)||0), 0); }
+    else if (ex.hasWeight) { vol = sets.reduce((s, x) => s + ((x.reps||0) * (x.weight||1)), 0); }
+    else { vol = sets.reduce((s, x) => s + (x.reps||0), 0); }
+    const label = new Date(date+"T12:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"});
+    points.push({ date, label, vol });
+  }
+  return points;
+}
+
+function drawBarChart(points, unit) {
+  if (!points.length) return `<div class="chart-empty">No data yet for this exercise.</div>`;
+  const W = 320, H = 100, pad = 8, barGap = 4;
+  const max = Math.max(...points.map(p => p.vol)) || 1;
+  const bw = (W - pad*2 - barGap * (points.length - 1)) / points.length;
+  let bars = "", labels = "", values = "";
+  points.forEach((p, i) => {
+    const bh = Math.max(4, ((p.vol / max) * (H - 24)));
+    const x = pad + i * (bw + barGap);
+    const y = H - bh - 16;
+    bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="3" fill="#c8ff00" opacity="0.85"/>`;
+    labels += `<text x="${(x + bw/2).toFixed(1)}" y="${H}" font-size="8" fill="#555" text-anchor="middle" font-family="monospace">${p.label}</text>`;
+    values += `<text x="${(x + bw/2).toFixed(1)}" y="${(y - 3).toFixed(1)}" font-size="8" fill="#c8ff00" text-anchor="middle" font-family="monospace">${p.vol}</text>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H+4}" width="100%" style="display:block">${bars}${values}${labels}</svg><div style="font-size:10px;color:#444;text-align:right;margin-top:2px">${unit}</div>`;
+}
+
+function renderProgress() {
+  const { logs, chartEx, routine } = state;
+  const streak = getStreak();
+  const last7 = getLast7Days();
+  const pbs = getPersonalBests();
+  const today = todayStr();
+
+  // Streak card
+  const weekDots = last7.map(d => `
+    <div class="week-cell">
+      <div class="week-dot${d.worked?" done":d.isToday?" today-empty":""}"></div>
+      <div class="week-day${d.isToday?" today":""}">${d.day}</div>
+    </div>`).join("");
+  const streakHTML = `<div class="streak-card">
+    <div class="streak-top">
+      <div style="font-size:44px;line-height:1">🔥</div>
+      <div class="streak-num">${streak.current}</div>
+      <div class="streak-info">
+        <div class="streak-label">Day Streak</div>
+        <div class="streak-best">Best: ${streak.best} days</div>
+        <div class="streak-best">${Object.keys(logs).filter(d=>Object.values(logs[d]).some(s=>s.length)).length} total sessions</div>
+      </div>
+    </div>
+    <div class="week-grid">${weekDots}</div>
+  </div>`;
+
+  // Personal bests
+  const pbEntries = Object.entries(pbs).filter(([id]) => routine.includes(id));
+  let pbHTML = "";
+  if (!pbEntries.length) { pbHTML = `<div class="empty" style="margin-top:10px;margin-bottom:10px">Log some sets to see personal bests.</div>`; }
+  else {
+    pbHTML = pbEntries.map(([id, pb]) => {
+      const ex = getExercise(id);
+      let val, unit, date;
+      if (ex.isTime) { val = pb.time; unit = "sec"; date = pb.timeDate; }
+      else if (ex.hasWeight) { val = pb.weight; unit = "kg"; date = pb.weightDate; }
+      else { val = pb.reps; unit = "reps"; date = pb.repDate; }
+      if (!val) return "";
+      const dateStr = date ? new Date(date+"T12:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"}) : "";
+      return `<div class="pb-card">
+        <div class="pb-left"><div class="pb-name">${ex.name}</div><div class="pb-date">${dateStr}</div></div>
+        <div><div class="pb-val">${val}</div><div class="pb-unit">${unit}</div></div>
+      </div>`;
+    }).join("");
+  }
+
+  // Volume chart
+  const exWithData = routine.filter(id => {
+    return Object.values(logs).some(dl => (dl[id]||[]).length > 0);
+  });
+  const selEx = exWithData.includes(chartEx) ? chartEx : (exWithData[0] || routine[0] || "PU");
+  const exBtns = exWithData.slice(0, 8).map(id =>
+    `<button class="chart-ex-btn${id===selEx?" active":""}" onclick="setState({chartEx:'${id}'})">${getExercise(id).name}</button>`
+  ).join("");
+  const pts = getVolumeData(selEx);
+  const ex = getExercise(selEx);
+  const unit = ex.isTime ? "total seconds" : ex.hasWeight ? "total volume (reps × kg)" : "total reps";
+  const chartBody = exBtns ? `<div class="chart-ex-select">${exBtns}</div>${drawBarChart(pts, unit)}` : `<div class="chart-empty">Log some sets to see charts.</div>`;
+
+  return `<div class="view">
+    ${streakHTML}
+    <div class="section-title">Personal Bests</div>
+    ${pbHTML}
+    <div class="chart-card">
+      <div class="chart-title">Volume — Last 14 Days</div>
+      ${chartBody}
+    </div>
+  </div>`;
+}
 function render() {
   const app = document.getElementById("app");
   const { view, activeEx, logs, timer, routine, custom, libSearch, libCat, customForm } = state;
@@ -511,7 +703,7 @@ function render() {
         else { inputs=`<input class="input-reps" type="text" inputmode="decimal" placeholder="reps" value="${state.currentReps}" oninput="state.currentReps=this.value" onkeydown="if(event.key==='Enter')addSet()"/>${ex.hasWeight?`<input class="input-kg" type="text" inputmode="decimal" placeholder="kg" value="${state.currentKg}" oninput="state.currentKg=this.value" onkeydown="if(event.key==='Enter')addSet()"/>`:""}`; }
         body = `<div class="ex-body">${pills}<div class="input-row">${inputs}<button class="btn-addset" onclick="addSet()">+ SET</button></div></div>`;
       }
-      cards += `<div class="ex-card${isActive?" active":""}"><div class="ex-header" onclick="openExercise('${id}')"><div class="ex-info"><span class="ex-icon">${getIcon(id)}</span><div><div class="ex-name">${ex.name}<span class="ex-code">${id}</span></div>${doneSets.length?`<div class="ex-sets-count">${doneSets.length} set${doneSets.length>1?"s":""} logged</div>`:""}</div></div><div class="ex-badge${doneSets.length?" done":""}">${doneSets.length||"+"}</div></div>${body}</div>`;
+      cards += `<div class="ex-card${isActive?" active":""}"><div class="ex-header" onclick="openExercise('${id}')"><div class="ex-info"><span class="ex-icon">${getIcon(id)}</span><div><div class="ex-name">${ex.name}</div><div style="font-size:10px;color:#3a5000;margin-top:2px">${ex.cat}${ex.hasWeight?" · weighted":""}${ex.isTime?" · timed":""}</div>${doneSets.length?`<div class="ex-sets-count">${doneSets.length} set${doneSets.length>1?"s":""} logged</div>`:""}</div></div><div class="ex-badge${doneSets.length?" done":""}">${doneSets.length||"+"}</div></div>${body}</div>`;
     }
     if (!routine.length) cards = `<div class="empty">No exercises in your routine.<br>Add some in the Routine tab.</div>`;
     logHTML = `<div class="view">${timerHTML}${cards}</div>`;
@@ -543,8 +735,8 @@ function render() {
     let routineItems = "";
     for (const id of routine) {
       const ex = getExercise(id);
-      const isDefault = !!DEFAULT_ROUTINE.find(e=>e.id===id);
-      routineItems += `<div class="routine-item"><div class="routine-left"><span class="ex-icon" style="width:28px;height:28px">${getIcon(id)}</span><div><span class="routine-name">${ex.name}</span><span class="routine-tag">${ex.cat}${ex.hasWeight?" · weighted":""}${ex.isTime?" · timed":""}</span></div></div><button class="btn-remove-routine" onclick="removeFromRoutine('${id}')" title="Remove">×</button></div>`;
+      const isCustom = !!state.custom.find(e=>e.id===id);
+      routineItems += `<div class="routine-item"><div class="routine-left"><span class="ex-icon" style="width:28px;height:28px">${getIcon(id)}</span><div><span class="routine-name">${ex.name}</span><span class="routine-tag">${ex.cat}${ex.hasWeight?" · weighted":""}${ex.isTime?" · timed":""}</span></div></div><div style="display:flex;gap:6px;align-items:center">${isCustom?`<button class="btn-remove-lib" style="font-size:11px;padding:4px 8px" onclick="deleteCustomExercise('${id}')" title="Delete custom exercise">🗑</button>`:""}<button class="btn-remove-routine" onclick="removeFromRoutine('${id}')" title="Remove from routine">×</button></div></div>`;
     }
     if (!routine.length) routineItems = `<div class="empty" style="margin-top:10px">Routine is empty.</div>`;
 
@@ -582,9 +774,10 @@ function render() {
     <div class="tabs">
       <button class="tab-btn${view==="log"?" active":""}" onclick="setState({view:'log'})">Today</button>
       <button class="tab-btn${view==="history"?" active":""}" onclick="setState({view:'history'})">History</button>
+      <button class="tab-btn${view==="progress"?" active":""}" onclick="setState({view:'progress'})">Progress</button>
       <button class="tab-btn${view==="routine"?" active":""}" onclick="setState({view:'routine'})">Routine</button>
     </div>
-    ${view==="log"?logHTML:view==="history"?histHTML:routineHTML}
+    ${view==="log"?logHTML:view==="history"?histHTML:view==="progress"?renderProgress():routineHTML}
   `;
 }
 
